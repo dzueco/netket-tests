@@ -4,6 +4,9 @@
 # Ground-state of 1D transverse-field Ising model with NetKet,
 # following the "gs-ising" netket tutorial using an FFN ansatz.
 #  Besides, we compute the S2 with netket and homemade function. Also the gradient
+
+# THE CODE IS SELFCONTAINED. SO FAR NO MODULE IS BUILT FOR THE MAIN.  IT IS  AN EXERCISE AND POLISHING SEEMS MANDATORY.
+
 # David, December 2025
 #
 import os
