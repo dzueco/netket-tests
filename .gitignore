@@ -1,0 +1,18 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environments
+.venv/
+env/
+venv/
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.vscode/
+
+# JAX / NetKet temporary outputs
+.jax_cache/
+*.log
