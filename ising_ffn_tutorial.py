@@ -151,6 +151,7 @@ print(
 # ---------
 import jax
 from jax.flatten_util import ravel_pytree
+import jax.scipy as jsp
 
 NA = N // 2  # size of subsystem A
 
@@ -205,6 +206,81 @@ def renyi2_from_samples(params, sigma1, sigma2):
     # notice that jnp.log es the natural logarithm. thus, we dvide by ln(2)
     S2 = -jnp.log(swap_est) / jnp.log(2.0)
     return S2.real
+
+
+# ------
+#  Gradient of S2 (self-normalized, log-sum-exp/softmax, no S2)
+# avoid computing S2. only the gradient following Ismael idea...
+# ------
+def S2_grad_f(vstate, n_samples=100000):
+    """
+    Compute the gradient of S2(A) w.r.t. variational parameters WITHOUT computing S2 itself.
+
+    We use:
+        Purity = P = < Q >_{Pi x Pi}
+        ln P = ln <Q> = ln( (1/M) sum_k exp(logQ_k) )
+              = logsumexp(logQ) - ln M
+
+    Therefore:
+        ∂_θ ln P_A = sum_k softmax(logQ)_k * ∂_θ logQ_k
+                  ≈ (sum_k w_k ∂_θ logQ_k) / (sum_k w_k)
+        with w_k = exp(logQ_k - max(logQ))
+
+    Finally:
+        ∂_θ S2 = -(1/ln 2) * ∂_θ ln P_A
+
+    Notes:
+    - This returns the gradient PyTree and (optionally) its L2 norm.
+    - This function does NOT compute S2 or P_A explicitly; it only computes the gradient.
+    """
+    # Draw two independent replica batches
+    samples1 = vstate.sample(n_samples=n_samples).reshape(-1, N)
+    samples2 = vstate.sample(n_samples=n_samples).reshape(-1, N)
+
+    M = min(samples1.shape[0], samples2.shape[0])
+    samples1 = samples1[:M]
+    samples2 = samples2[:M]
+
+    def lnP_estimator(params, sigma1, sigma2):
+        # Split each replica into A and B
+        alpha = sigma1[:, :NA]
+        beta = sigma1[:, NA:]
+        alpha_p = sigma2[:, :NA]
+        beta_p = sigma2[:, NA:]
+
+        # Swapped configurations (α',β) and (α,β')
+        sigma_a_p_b = jnp.concatenate([alpha_p, beta], axis=-1)
+        sigma_a_b_p = jnp.concatenate([alpha, beta_p], axis=-1)
+
+        # log ψ(σ) evaluated by the same FFN model as vstate
+        def logpsi_batch(p, σ):
+            return model.apply({"params": p}, σ)
+
+        # Log-amplitudes for original and swapped configs
+        logpsi_ab = logpsi_batch(params, sigma1)
+        logpsi_a_p_b_p = logpsi_batch(params, sigma2)
+        logpsi_a_p_b = logpsi_batch(params, sigma_a_p_b)
+        logpsi_a_b_p = logpsi_batch(params, sigma_a_b_p)
+
+        # logQ_k for each sample pair k
+        log_q_loc = (logpsi_a_p_b + logpsi_a_b_p) - (logpsi_ab + logpsi_a_p_b_p)
+
+        # ln P_A = ln <Q> = logsumexp(logQ) - ln M
+        # (we do not compute <Q> or S2 explicitly)
+        lnP = jsp.special.logsumexp(log_q_loc) - jnp.log(log_q_loc.shape[0])
+        return lnP.real
+
+    # Gradient of ln P_A w.r.t. params (no S2 computed)
+    grad_lnP = jax.grad(lnP_estimator)(vstate.parameters, samples1, samples2)
+
+    # Convert to gradient of S2: ∂S2 = -(1/ln 2) ∂ ln P_A
+    grad_S2 = jax.tree_util.tree_map(lambda g: -(1.0 / jnp.log(2.0)) * g, grad_lnP)
+
+    # Optional: compute L2 norm of gradient for monitoring
+    grad_dense, _ = ravel_pytree(grad_S2)
+    grad_norm = jnp.linalg.norm(grad_dense)
+
+    return grad_S2, grad_norm
 
 
 # ------
@@ -298,6 +374,9 @@ def compute_S2_all(vstate, n_samples=100000):
 
 # Example call after training:
 S2_val, grad_S2, grad_norm, S2_native = compute_S2_all(vstate, n_samples=50000)
+grad_S2_alt, grad_norm_alt = S2_grad_f(vstate, n_samples=50000)
+print(f"||∂S2/∂θ|| (L2 norm) using S2_grad_f  : {float(grad_norm_alt):.6e}")
 
 
 # %%
+

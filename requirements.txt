@@ -1,0 +1,13 @@
+# Core scientific stack
+numpy
+scipy
+matplotlib
+
+# JAX stack (installed via pip even inside conda)
+jax
+jaxlib
+
+# NetKet and dependencies
+netket
+flax
+optax
