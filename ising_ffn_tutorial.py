@@ -222,12 +222,12 @@ def S2_grad_f(vstate, n_samples=100000):
               = logsumexp(logQ) - ln M
 
     Therefore:
-        ∂_θ ln P_A = sum_k softmax(logQ)_k * ∂_θ logQ_k
+        ∂_θ ln P = sum_k softmax(logQ)_k * ∂_θ logQ_k
                   ≈ (sum_k w_k ∂_θ logQ_k) / (sum_k w_k)
         with w_k = exp(logQ_k - max(logQ))
 
     Finally:
-        ∂_θ S2 = -(1/ln 2) * ∂_θ ln P_A
+        ∂_θ S2 = -(1/ln 2) * ∂_θ ln P
 
     Notes:
     - This returns the gradient PyTree and (optionally) its L2 norm.
@@ -264,16 +264,26 @@ def S2_grad_f(vstate, n_samples=100000):
 
         # logQ_k for each sample pair k
         log_q_loc = (logpsi_a_p_b + logpsi_a_b_p) - (logpsi_ab + logpsi_a_p_b_p)
-
-        # ln P_A = ln <Q> = logsumexp(logQ) - ln M
-        # (we do not compute <Q> or S2 explicitly)
+        # The function logsumexp implements:
+        #
+        #     logsumexp(x_k) = ln( sum_k exp(x_k) )
+        #
+        # in a numerically stable way (subtracting max(x_k) internally).
+        # Its derivative automatically produces softmax weights, so that
+        # backpropagation yields:
+        #
+        #     ∂θ ln P_A = sum_k softmax(log_q_loc)_k * ∂θ log Q_k
+        #
+        # i.e. the self-normalized (Q-weighted) Monte Carlo estimator of the
+        # gradient, without ever computing the purity or S2 explicitly.
+                
         lnP = jsp.special.logsumexp(log_q_loc) - jnp.log(log_q_loc.shape[0])
         return lnP.real
 
-    # Gradient of ln P_A w.r.t. params (no S2 computed)
+    # Gradient of ln P (no S2 computed!!!!!!!!!!!!!!!)
     grad_lnP = jax.grad(lnP_estimator)(vstate.parameters, samples1, samples2)
 
-    # Convert to gradient of S2: ∂S2 = -(1/ln 2) ∂ ln P_A
+    # Convert to gradient of S2: ∂S2 = -(1/ln 2) ∂ ln P
     grad_S2 = jax.tree_util.tree_map(lambda g: -(1.0 / jnp.log(2.0)) * g, grad_lnP)
 
     # Optional: compute L2 norm of gradient for monitoring
