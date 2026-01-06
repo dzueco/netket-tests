@@ -212,7 +212,7 @@ def renyi2_from_samples(params, sigma1, sigma2):
 #  Gradient of S2 (self-normalized, log-sum-exp/softmax, no S2)
 # avoid computing S2. only the gradient following Ismael idea...
 # ------
-def S2_grad_f(vstate, n_samples=100000):
+def S2_grad_f(vstate, n_samples=100000, vstate2=None, reset_between=True):
     """
     Compute the gradient of S2(A) w.r.t. variational parameters WITHOUT computing S2 itself.
 
@@ -233,9 +233,17 @@ def S2_grad_f(vstate, n_samples=100000):
     - This returns the gradient PyTree and (optionally) its L2 norm.
     - This function does NOT compute S2 or P_A explicitly; it only computes the gradient.
     """
-    # Draw two independent replica batches
+    # Draw two replica batches.
+    # For true independence, pass a second MCState via vstate2.
+    # Otherwise, we reset the sampler state between draws to reduce correlations.
     samples1 = vstate.sample(n_samples=n_samples).reshape(-1, N)
-    samples2 = vstate.sample(n_samples=n_samples).reshape(-1, N)
+
+    if vstate2 is None:
+        if reset_between:
+            vstate.reset()
+        samples2 = vstate.sample(n_samples=n_samples).reshape(-1, N)
+    else:
+        samples2 = vstate2.sample(n_samples=n_samples).reshape(-1, N)
 
     M = min(samples1.shape[0], samples2.shape[0])
     samples1 = samples1[:M]
@@ -276,7 +284,7 @@ def S2_grad_f(vstate, n_samples=100000):
         #
         # i.e. the self-normalized (Q-weighted) Monte Carlo estimator of the
         # gradient, without ever computing the purity or S2 explicitly.
-                
+
         lnP = jsp.special.logsumexp(log_q_loc) - jnp.log(log_q_loc.shape[0])
         return lnP.real
 
@@ -300,7 +308,7 @@ def S2_grad_f(vstate, n_samples=100000):
 from netket.experimental.observable import Renyi2EntanglementEntropy
 
 
-def compute_S2_all(vstate, n_samples=100000):
+def compute_S2_all(vstate, n_samples=100000, vstate2=None, reset_between=True):
     """
     Compute:
       - S2 (homemade MC swap estimator),
@@ -309,9 +317,17 @@ def compute_S2_all(vstate, n_samples=100000):
 
     using two *independent* replica batches drawn from vstate.
     """
-    # Draw two independent replica batches
+    # Draw two replica batches.
+    # For true independence, pass a second MCState via vstate2.
+    # Otherwise, we reset the sampler state between draws to reduce correlations.
     samples1 = vstate.sample(n_samples=n_samples)
-    samples2 = vstate.sample(n_samples=n_samples)
+
+    if vstate2 is None:
+        if reset_between:
+            vstate.reset()
+        samples2 = vstate.sample(n_samples=n_samples)
+    else:
+        samples2 = vstate2.sample(n_samples=n_samples)
 
     samples1 = samples1.reshape(-1, N)
     samples2 = samples2.reshape(-1, N)
@@ -383,10 +399,19 @@ def compute_S2_all(vstate, n_samples=100000):
 
 
 # Example call after training:
-S2_val, grad_S2, grad_norm, S2_native = compute_S2_all(vstate, n_samples=50000)
-grad_S2_alt, grad_norm_alt = S2_grad_f(vstate, n_samples=50000)
+# Option A (default): same vstate, but reset between replica draws to reduce correlations
+S2_val, grad_S2, grad_norm, S2_native = compute_S2_all(
+    vstate, n_samples=50000, reset_between=True
+)
+grad_S2_alt, grad_norm_alt = S2_grad_f(vstate, n_samples=50000, reset_between=True)
 print(f"||∂S2/∂θ|| (L2 norm) using S2_grad_f  : {float(grad_norm_alt):.6e}")
+
+# Option B (recommended for strict independence): create a second, independent MCState
+# sampler2 = nk.sampler.MetropolisLocal(hi)
+# vstate2 = nk.vqs.MCState(sampler2, model, n_samples=1008)
+# vstate2.parameters = vstate.parameters
+# S2_val2, grad_S2_2, grad_norm2, S2_native2 = compute_S2_all(vstate, n_samples=50000, vstate2=vstate2)
+# grad_S2_alt2, grad_norm_alt2 = S2_grad_f(vstate, n_samples=50000, vstate2=vstate2)
 
 
 # %%
-
